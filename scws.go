@@ -176,6 +176,7 @@ func (s *Scws) SendText(text string) {
 	s.text = text
 	if s.c_text != nil {
 		C.free(unsafe.Pointer(s.c_text))
+		s.c_text = nil
 	}
 	s.c_text = C.CString(text)
 	C.scws_send_text(s.s, s.c_text, C.int(len(text)))
@@ -193,6 +194,7 @@ func (s *Scws) Next() bool {
 	if s.res == nil {
 		if s.c_text != nil {
 			C.free(unsafe.Pointer(s.c_text))
+			s.c_text = nil
 		}
 		return false
 	}

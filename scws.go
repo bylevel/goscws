@@ -11,6 +11,7 @@ package goscws
 import "C"
 import (
 	"errors"
+	"unsafe"
 )
 
 const (
@@ -40,9 +41,18 @@ const (
 //   struct scws_zchar *zmap;
 // } scws_st, *scws_t;
 type Scws struct {
-	s   C.scws_t     // scws的C对象
-	res C.scws_res_t // scws的分词结果C对象
-	cur C.scws_res_t
+	s    C.scws_t     // scws的C对象
+	res  C.scws_res_t // C语言 分词结果集
+	cur  C.scws_res_t
+	text string //分词的内容
+	rs   Res    //分词结果
+}
+
+// 分词结果
+type Res struct {
+	String string  //分词的结果
+	Attr   string  //词性
+	Idf    float64 //idf值
 }
 
 //  分配或初始化与 scws 系列操作的 scws_st 对象。该函数将自动分配、初始化、并返回新对象的指针。 只能通过调用 scws_free() 来释放该对象
@@ -115,5 +125,40 @@ func (s *Scws) SetIgnore(yes int) {
 // 注意 该函数可安全用于二进制数据，不会因为字符串中包括 \0 而停止切分。 这个函数应在 scws_get_result() 和 scws_get_tops() 之前调用。
 // scws 结构内部维护着该字符串的指针和相应的偏移及长度，连续调用后会覆盖之前的设定；故不应在多次的 scws_get_result 循环中再调用 scws_send_text() 以免出错。
 func (s *Scws) SendText(text string) {
+	s.text = text
 	C.scws_send_text(s.s, C.CString(text), C.int(len(text)))
+}
+
+// 获取下一个分词结果
+func (s *Scws) Next() bool {
+	// cur为nil说明一个res已经结束
+	if s.cur == nil {
+		C.scws_free_result(s.res)
+		s.res = C.scws_get_result(s.s)
+		s.cur = s.res
+	}
+	// res为nil代表分词已结束
+	if s.res == nil {
+		return false
+	}
+	// 生成分词结果
+	s.rs = Res{}
+	s.rs.String = s.text[s.cur.off : int(s.cur.off)+int(s.cur.len)]
+	// 将C语言的char数组转成字符串
+	goArray := make([]byte, len(s.cur.attr))
+	p := uintptr(unsafe.Pointer(&s.cur.attr[0]))
+	for i := 0; i < len(s.cur.attr); i++ {
+		j := *(*byte)(unsafe.Pointer(p))
+		goArray[i] = j
+		p += unsafe.Sizeof(j)
+	}
+	s.rs.Attr = string(goArray)
+	s.rs.Idf = float64(s.cur.idf)
+	s.cur = s.cur.next
+	return true
+}
+
+// 返回结果
+func (s *Scws) GetRes() Res {
+	return s.rs
 }

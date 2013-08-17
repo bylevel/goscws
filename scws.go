@@ -64,14 +64,32 @@ func (s *Scws) New() (err error) {
 	return
 }
 
+// 设置C语言里的scws_t，用于Fork
+func (s *Scws) SetScws(scws C.scws_t) {
+	s.s = scws
+}
+
 // 释放对象
 func (s *Scws) Free() {
 	C.scws_free(s.s)
 }
 
+// Fork一个新的对象，共享原来的字典和规则
+func (s *Scws) Fork() (scws Scws, err error) {
+	rs := C.scws_fork(s.s)
+	if rs == nil {
+		err = errors.New("内存不足")
+	}
+	scws = Scws{}
+	scws.SetScws(rs)
+	return
+}
+
 // 设定字符编码，支持gbk和utf8两种，默认是gbk
 func (s *Scws) SetCharset(charset string) {
-	C.scws_set_charset(s.s, C.CString(charset))
+	c_charset := C.CString(charset)
+	C.scws_set_charset(s.s, c_charset)
+	C.free(unsafe.Pointer(c_charset))
 }
 
 // 清除并设定当前 scws 操作所有的词典文件
@@ -81,10 +99,32 @@ func (s *Scws) SetCharset(charset string) {
 // 返回值 成功返回 0，失败返回 -1。
 // 注意 若此前 scws 句柄已经加载过词典，则此调用会先释放已经加载的全部词典。和 AddDict 的区别在于会覆盖已有词典。
 func (s *Scws) SetDict(fpath string, mode C.int) (err error) {
-	if int(C.scws_set_dict(s.s, C.CString(fpath), mode)) == -1 {
+	c_fpath := C.CString(fpath)
+	if int(C.scws_set_dict(s.s, c_fpath, mode)) == -1 {
 		err = errors.New("加载词典失败")
 	}
+	C.free(unsafe.Pointer(c_fpath))
 	return
+}
+
+// 添加词典文件到当前 scws 对象。
+// 若此前 scws 句柄已经加载过词典，则新加入的词典具有更高的优先权。
+func (s *Scws) AddDict(fpath string, mode C.int) (err error) {
+	c_fpath := C.CString(fpath)
+	if int(C.scws_add_dict(s.s, c_fpath, mode)) == -1 {
+		err = errors.New("加载词典失败")
+	}
+	C.free(unsafe.Pointer(c_fpath))
+	return
+}
+
+// 设定是否将闲散文字自动以二字分词法聚合。
+//
+// 参数 yes 如果为 1 表示执行二分聚合，0 表示不处理，缺省为 0。
+func (s *Scws) SetDuality(yes int) {
+	c_yes := C.int(yes)
+	C.scws_set_duality(s.s, c_yes)
+	C.free(unsafe.Pointer(&c_yes))
 }
 
 // 设定规则集文件
@@ -92,10 +132,12 @@ func (s *Scws) SetDict(fpath string, mode C.int) (err error) {
 // 错误 加载失败，scws_t 结构中的 r 元素为 NULL，即通过 s->r == NULL 与否来判断加载的失败与成功。
 // 注意 规则集定义了一些新词自动识别规则，包括常见的人名、地区、数字年代等。规则编写方法另行参考其它部分。
 func (s *Scws) SetRule(fpath string) (err error) {
-	C.scws_set_rule(s.s, C.CString(fpath))
+	c_fpath := C.CString(fpath)
+	C.scws_set_rule(s.s, c_fpath)
 	if s.s.r == nil {
 		err = errors.New("加载失败")
 	}
+	C.free(unsafe.Pointer(c_fpath))
 	return
 }
 
@@ -115,7 +157,9 @@ func (s *Scws) SetMulti(mode C.int) {
 //
 // 参数 yes 1 表示忽略，0 表示不忽略，缺省情况为不忽略。
 func (s *Scws) SetIgnore(yes int) {
-	C.scws_set_ignore(s.s, C.int(yes))
+	c_yes := C.int(yes)
+	C.scws_set_ignore(s.s, c_yes)
+	C.free(unsafe.Pointer(&c_yes))
 }
 
 // C.scws_send_text(s, text, C.int(len(C.GoString(text))))
@@ -126,7 +170,11 @@ func (s *Scws) SetIgnore(yes int) {
 // scws 结构内部维护着该字符串的指针和相应的偏移及长度，连续调用后会覆盖之前的设定；故不应在多次的 scws_get_result 循环中再调用 scws_send_text() 以免出错。
 func (s *Scws) SendText(text string) {
 	s.text = text
-	C.scws_send_text(s.s, C.CString(text), C.int(len(text)))
+	c_text := C.CString(text)
+	c_len := C.int(len(text))
+	C.scws_send_text(s.s, c_text, c_len)
+	C.free(unsafe.Pointer(c_text))
+	C.free(unsafe.Pointer(&c_len))
 }
 
 // 获取下一个分词结果

@@ -41,11 +41,12 @@ const (
 //   struct scws_zchar *zmap;
 // } scws_st, *scws_t;
 type Scws struct {
-	s    C.scws_t     // scws的C对象
-	res  C.scws_res_t // C语言 分词结果集
-	cur  C.scws_res_t
-	text string //分词的内容
-	rs   Res    //分词结果
+	s      C.scws_t     // scws的C对象
+	res    C.scws_res_t // C语言 分词结果集
+	cur    C.scws_res_t
+	text   string  //分词的内容
+	c_text *C.char //c分词的内容
+	rs     Res     //分词结果
 }
 
 // 分词结果
@@ -71,7 +72,14 @@ func (s *Scws) SetScws(scws C.scws_t) {
 
 // 释放对象
 func (s *Scws) Free() {
-	C.scws_free(s.s)
+	// 释放文本对象
+	if s.c_text != nil {
+		C.free(unsafe.Pointer(s.c_text))
+	}
+	// 释放scws对象
+	if s.s != nil {
+		C.scws_free(s.s)
+	}
 }
 
 // Fork一个新的对象，共享原来的字典和规则
@@ -122,9 +130,7 @@ func (s *Scws) AddDict(fpath string, mode C.int) (err error) {
 //
 // 参数 yes 如果为 1 表示执行二分聚合，0 表示不处理，缺省为 0。
 func (s *Scws) SetDuality(yes int) {
-	c_yes := C.int(yes)
-	C.scws_set_duality(s.s, c_yes)
-	C.free(unsafe.Pointer(&c_yes))
+	C.scws_set_duality(s.s, C.int(yes))
 }
 
 // 设定规则集文件
@@ -157,9 +163,7 @@ func (s *Scws) SetMulti(mode C.int) {
 //
 // 参数 yes 1 表示忽略，0 表示不忽略，缺省情况为不忽略。
 func (s *Scws) SetIgnore(yes int) {
-	c_yes := C.int(yes)
-	C.scws_set_ignore(s.s, c_yes)
-	C.free(unsafe.Pointer(&c_yes))
+	C.scws_set_ignore(s.s, C.int(yes))
 }
 
 // C.scws_send_text(s, text, C.int(len(C.GoString(text))))
@@ -170,11 +174,11 @@ func (s *Scws) SetIgnore(yes int) {
 // scws 结构内部维护着该字符串的指针和相应的偏移及长度，连续调用后会覆盖之前的设定；故不应在多次的 scws_get_result 循环中再调用 scws_send_text() 以免出错。
 func (s *Scws) SendText(text string) {
 	s.text = text
-	c_text := C.CString(text)
-	c_len := C.int(len(text))
-	C.scws_send_text(s.s, c_text, c_len)
-	C.free(unsafe.Pointer(c_text))
-	C.free(unsafe.Pointer(&c_len))
+	if s.c_text != nil {
+		C.free(unsafe.Pointer(s.c_text))
+	}
+	s.c_text = C.CString(text)
+	C.scws_send_text(s.s, s.c_text, C.int(len(text)))
 }
 
 // 获取下一个分词结果
@@ -187,6 +191,9 @@ func (s *Scws) Next() bool {
 	}
 	// res为nil代表分词已结束
 	if s.res == nil {
+		if s.c_text != nil {
+			C.free(unsafe.Pointer(s.c_text))
+		}
 		return false
 	}
 	// 生成分词结果
